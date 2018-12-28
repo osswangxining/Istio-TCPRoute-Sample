@@ -273,3 +273,60 @@ Now we should see a proper HTTP/1.1 200 response and the JSON payload for the pr
 
 
 4.3.4  Serving multiple virtual hosts with TLS
+Istio’s ingress gateway can serve multiple virtual hosts each with its own certificate and private key from the same HTTPS port (i.e., port 443). To do that, we just add multiple entries for the same port and the same protocol. For example, we can add multiple entries for both the apiserver.istioinaction.io and catalog.istioinaction.io services each with their own certificate and key pair. An Istio Gateway resource that describes multiple virtual hosts served with HTTPS looks like this:
+
+Notice that both of the entries each listen on port 443, each serve the HTTPS protocol, but they have different names. One is named https-apiserver, and the other is named https-catalog. Each has its own unique certificates and keys that are used for the specific virtual host it serves. To put this into action, we need to add these new certificates and keys. Let’s create them:
+
+Now we want to update the istio-ingressgateway to mount this new certificate/key pair from the /etc/istio/catalog-ingressgateway-certs/ folder. We use an istio-ingressgateway deployment that’s already been updated to this:
+
+Now that we have the new secrets and the gateway is mounting them, we can update the gateway configuration:
+
+Lastly, we need to add a VirtualService for the catalog service that we’ll be exposing through this ingress gateway:
+
+
+Now that we’ve updated the istio-ingressgateway, let’s give it a try. Calling apiserver.istioinaction.io should work just like it did in the simple TLS section:
+
+Now when we call the catalog service through the Istio gateway, let’s use different certificates:
+
+Both calls should succeed with the same response. You may be wondering how does the Istio ingress gateway know which certificate to present depending who’s calling? In other words, there’s only a single port opened for these connections, how does it know which service the client is trying to access and which certificate corresponds with that service? The answer lies in an extension to TLS called Server Name Indication (SNI). Basically, when a HTTPS connection is created, the client first identifies which service it’s trying to reach using the ClientHello part of the TLS handshake. Istio’s Gateway (Envoy specifically) implements SNI on TLS which is how it’s able to present the correct cert and route to the correct service. For more on SNI, see XXX
+
+In this section we successfully exposed to different virtual hosts and served each with its own unique certificate through the same HTTPS port. In the next section, we’ll take a look at TCP traffic.
+
+4.4  TCP traffic
+
+Istio’s gateway is powerful enough to serve not only HTTP/HTTPS traffic, but any traffic accessible via TCP. For example, we can expose a database (like MongoDB) or a message queue like Kafka through the ingress gateway. When Istio treats the traffic as plain TCP, we do not get as many useful features like retries, request-level circuit breaking, complex routing, etc. This is simply because Istio cannot tell what protocol is being used (unless a specific protocol that Istio understands is used — like MongoDB). Let’s take a look at how to expose TCP traffic through the Istio Gateway so that clients on the outside of the cluster can communicate with those running inside the cluster.
+
+4.4.1  Exposing TCP ports on the Istio Gateway
+The first thing we need to do is create a TCP-based service within our service mesh. For this example, we’ll use the simple echo service from https://github.com/cjimti/go-echo/. This simple TCP service will allow us to login with a simple TCP client like telnet and issue commands that should be displayed back to us.
+
+Let’s deploy the TCP service and inject the Istio service proxy next to it:
+
+Next, we should create an Istio Gateway resource that exposes a specific non-HTTP port for this service. In the following example, we expose port 31400 on the default istio-ingressgateway. Just like with the HTTP ports, 80 and 443, this TCP port 31400 must be made available either as a NodePort or as a cloud LoadBalancer. In our examples running on minikube, this is exposed as a NodePort running on 31400:
+
+
+Let’s create the gateway:
+
+Now that we’ve exposed a port on our ingress gateway, we need to route the traffic to the echo service. To do that, we’ll use the VirtualService resource like we did in the previous sections. Note, for tcp traffic like that, we must match on the incoming port, in this case port 31400:
+
+Let’s create the virtual service:
+
+Now that we have exposed a port on our ingress gateway, and set up routing, we should be able to connect with a very simple telnet command:
+
+As you type anything into the console and hit Return/Enter, you should see your text replayed back to you:
+
+To quit from telnet press "ctl+]" and type quit and then hit Return/Enter.
+
+4.4.2  Traffic routing with SNI an TLS
+Gregor, this chapter is already getting long; should I do this section? I’m leaning toward yes… I’ve started to pull together an example just in case using a simple MQTT broker.
+
+In this last section of the chapter, we learned how to use the Istio gateway functionality to accept and route non HTTP traffic, specifically, applications that may communicate over a TCP protocol that is very application specific. This opens the door for a much wider swath of applications that can participate in the service mesh including databases, message queues, caches, and even legacy applications with their own wire protocols. Istio’s gateway can be used to secure the traffic, route the traffic to backend services, and even passthrough secure traffic and allowing the backing services to handle the security handshakes it may use.
+
+4.5  Summary
+In this section we looked at why it’s important to have very fine-grained control over what traffic enters your service-mesh cluster and how to use the Istio Gateway and VirtualService constructs to do this. Specifically we saw these ways to restrict traffic:
+
+By specific host over HTTP
+By simple TLS/HTTPS to encrypt traffic and prevent man-in-the-middle attacks
+Mutual TLS to provide identity to both server and client about who’s making the connections
+Basic TCP routing for non-HTTP traffic
+SNI/TLS for TCP connections for securing TCP connections
+We started to explore VirtualService resource files to configure how routing happens at the ingress of our cluster. In the next chapter, we’ll expand on our understanding of VirtualService resources for the purposes of more powerful routing within the service mesh and how this control helps us control new deployments, route around failures, and implement powerful testing capabilities.
